@@ -140,6 +140,48 @@ def generate(images: dict[str, bytes], n: int = 2, seed: int = 0, vrm: bool = Tr
     return buf.getvalue()
 
 
+@app.function(volumes={ROOT: volume}, timeout=3600, cpu=4, memory=16384)
+def export_on_body(results_tar: bytes, names: list[str], vrm: bytes, hair_glb: bytes, key: str, h: int = 100,
+                   seeds: list[int] | None = None) -> bytes:
+    """Export saved results (the tar `generate` returned) as VRM on another VRoid body, with no new diffusion run.
+    vrm: the body's VRM 0.x; hair_glb: the body's own hair as a GLB in the glTF axes (Y up, +Z front), in metres;
+    key: the body's name (also the file tag). Builds the body JSON (`hairdeck.vrm.body build`), then exports the
+    variations of `names` (folders under out/). Returns a tar of out/<name>/<key>_seed<s>.vrm and the body JSON."""
+    volume.reload()
+    work = pathlib.Path("/tmp/body")
+    (work / "hair").mkdir(parents=True, exist_ok=True)
+    (work / f"{key}.vrm").write_bytes(vrm)
+    (work / "hair" / "hair.glb").write_bytes(hair_glb)
+    with tarfile.open(fileobj=io.BytesIO(results_tar), mode="r:gz") as tar:
+        tar.extractall(work, filter="data")
+    body_json = work / f"{key}.json"
+    _sh(["python", "-m", "hairdeck.vrm.body", "build", str(work / f"{key}.vrm"), str(work / "hair"), key, str(h), key,
+         str(body_json)])
+    res = {}
+    for name in names:
+        d = work / "out" / name
+        for sd in sorted(d.glob("cards_seed*.json")):
+            s = int(sd.stem.removeprefix("cards_seed"))
+            if seeds is not None and s not in seeds:
+                continue
+            try:
+                _sh(["python", "-m", "hairdeck.vrm.export", str(d), str(s), "vrm", "--no-render", "--body", str(body_json)])
+                res[f"{name}/{s}"] = "ok"
+            except subprocess.CalledProcessError as e:
+                res[f"{name}/{s}"] = f"failed: {e}"
+    (work / "export_log.json").write_text(json.dumps(res, indent=1))
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        tar.add(body_json, arcname=f"{key}.json")
+        tar.add(work / "export_log.json", arcname="export_log.json")
+        for name in names:
+            for f in (work / "out" / name).glob(f"{key}_seed*.vrm"):
+                tar.add(f, arcname=f"{name}/{f.name}")
+            for f in (work / "out" / name).glob("vrm_seed*/*_export.json"):
+                tar.add(f, arcname=f"{name}/{f.parent.name}_{f.name}")
+    return buf.getvalue()
+
+
 @app.function(volumes={ROOT: volume}, timeout=1800, cpu=4)
 def run_shell(cmd: str) -> str:
     """Debug helper: run a shell command in the image with the volume mounted."""

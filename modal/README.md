@@ -32,3 +32,11 @@ secret named by `HAIRDECK_HF_SECRET` (default `redsky-huggingface`, key `HF_TOKE
 ## Notes
 
 - The code is mounted from this checkout at each run, so a change needs no image rebuild.
+
+## Export on a custom VRoid body
+
+`export_on_body` is a CPU function. It takes the `generate` results (a tar of the
+JSON and PNG files), a VRoid VRM, and a key. It builds the body description with
+`hairdeck.vrm.body build`, then runs `hairdeck.vrm.export ... --body` for every
+variation. The hair cards are in the head frame, so the same results fit any body
+without a new diffusion run.
